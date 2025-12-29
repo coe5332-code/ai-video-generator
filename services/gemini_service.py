@@ -29,7 +29,7 @@ def extract_json(text: str):
 
 # --- PROMPT ---
 def build_prompt(raw_text: str) -> str:
-    return f"""
+   return f"""
 You are creating PowerPoint slides for a government training video.
 TASK: From the RAW TEXT below, create CLEAN, TRAINING-READY slides.
 
@@ -89,3 +89,5 @@ def generate_slides_from_raw(raw_text: str, retries=3, delay=5):
                 # If it's a different error, don't retry
                 st.error(f"AI Generation Error: {e}")
                 raise e
+
+
