@@ -1,210 +1,120 @@
-from utils.avatar_utils import add_avatar_to_slide
 import os
+import shutil
+import logging
 from moviepy.editor import (
-    ImageClip, concatenate_videoclips, CompositeVideoClip,
-    AudioFileClip, concatenate_audioclips, TextClip, ColorClip, vfx
+    ImageClip, 
+    TextClip, 
+    CompositeVideoClip, 
+    AudioFileClip, 
+    concatenate_videoclips, 
+    concatenate_audioclips
 )
 from moviepy.config import change_settings
 
-# -------------------------------------------------
-# ImageMagick config
-# -------------------------------------------------
-change_settings({
-    "IMAGEMAGICK_BINARY": r"C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe"
-})
+# --- LOGGING SETUP ---
+logger = logging.getLogger(__name__)
 
-VIDEO_W, VIDEO_H = 1280, 720
-TOP_TEXT_HEIGHT = int(VIDEO_H * 0.6)
-BOTTOM_IMAGE_HEIGHT = VIDEO_H - TOP_TEXT_HEIGHT
+# --- IMAGEMAGICK CONFIGURATION ---
+# This part automatically finds 'magick' on Linux (Streamlit) or Windows (Local)
+def configure_imagemagick():
+    # 1. Try to find 'magick' or 'convert' in the system PATH
+    magick_path = shutil.which("magick") or shutil.which("convert")
+    
+    # 2. Fallback for common Windows installation path if not in PATH
+    if not magick_path and os.name == 'nt':
+        common_windows_path = r"C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe"
+        if os.path.exists(common_windows_path):
+            magick_path = common_windows_path
 
+    if magick_path:
+        change_settings({"IMAGEMAGICK_BINARY": magick_path})
+        logger.info(f"ImageMagick found at: {magick_path}")
+    else:
+        logger.error("ImageMagick binary not found. Video generation will fail.")
 
-# -------------------------------------------------
-# SLIDE CREATION WITH BETTER ANIMATION
-# -------------------------------------------------
-def create_slide(title, points, image_path, audio_file):
-    if not os.path.exists(audio_file) or os.path.getsize(audio_file) < 1024:
-        raise RuntimeError(f"Invalid audio file: {audio_file}")
-    audio_clip = AudioFileClip(audio_file)
-    duration = audio_clip.duration + 0.4  # small buffer
+configure_imagemagick()
 
-    # -----------------------------
-    # BACKGROUND (soft animated)
-    # -----------------------------
-    bg = (
-        ColorClip(size=(VIDEO_W, VIDEO_H), color=(20, 22, 32))
-        .set_duration(duration)
-        .fx(vfx.fadein, 0.4)
-        .fx(vfx.fadeout, 0.4)
-    )
+# --- SLIDE CREATION ---
+def create_slide(image_path, title_text, content_text, audio_path):
+    """
+    Creates a single video slide with background image, text overlays, and audio.
+    """
+    # 1. Load Audio to get duration
+    audio_clip = AudioFileClip(audio_path)
+    duration = audio_clip.duration
 
-    overlay = (
-        ColorClip(size=(VIDEO_W, VIDEO_H), color=(0, 0, 0))
-        .set_opacity(0.35)
-        .set_duration(duration)
-    )
+    # 2. Background Image
+    # Resize to standard 1080p (1920x1080)
+    img_clip = ImageClip(image_path).set_duration(duration).resize(height=1080)
+    img_clip = img_clip.set_position('center')
 
-    # -----------------------------
-    # TITLE
-    # -----------------------------
-    title_clip = (
-        TextClip(
-            title,
-            fontsize=48,
-            color="white",
-            font="Arial-Bold",
-            size=(VIDEO_W - 120, None),
-            method="caption"
-        )
-        .set_position(("center", 50))
-        .set_start(0.2)
-        .set_duration(duration)
-        .fadein(0.6)
-    )
+    # 3. Title Text
+    # Streamlit Cloud uses 'DejaVu-Sans' by default; Windows uses 'Arial'
+    font = "DejaVu-Sans" if os.name != 'nt' else "Arial"
+    
+    title_clip = TextClip(
+        title_text,
+        fontsize=70,
+        color='white',
+        font=font,
+        stroke_color='black',
+        stroke_width=2,
+        method='caption',
+        size=(1700, None)
+    ).set_duration(duration).set_position(('center', 100))
 
-    title_shadow = (
-        TextClip(
-            title,
-            fontsize=48,
-            color="black",
-            font="Arial-Bold",
-            size=(VIDEO_W - 120, None),
-            method="caption"
-        )
-        .set_position(("center", 52))
-        .set_start(0.2)
-        .set_duration(duration)
-        .set_opacity(0.6)
-    )
+    # 4. Content Text (Main Body)
+    content_clip = TextClip(
+        content_text,
+        fontsize=45,
+        color='yellow',
+        font=font,
+        stroke_color='black',
+        stroke_width=1,
+        method='caption',
+        size=(1500, None)
+    ).set_duration(duration).set_position(('center', 400))
 
-    # -----------------------------
-    # BULLETS (top section only)
-    # -----------------------------
-    bullet_clips = []
-    start_y = 140
-    line_gap = 44
-
-    for i, point in enumerate(points[:5]):
-        appear_time = 0.8 + i * 0.5
-        text = f"• {point.strip()}"
-
-        bullet = (
-            TextClip(
-                text,
-                fontsize=32,
-                color="white",
-                font="Arial",
-                size=(VIDEO_W - 200, None),
-                method="caption"
-            )
-            .set_position((100, start_y + i * line_gap))
-            .set_start(appear_time)
-            .set_duration(duration - appear_time)
-            .fadein(0.4)
-        )
-
-        shadow = (
-            TextClip(
-                text,
-                fontsize=32,
-                color="black",
-                font="Arial",
-                size=(VIDEO_W - 200, None),
-                method="caption"
-            )
-            .set_position((102, start_y + i * line_gap + 2))
-            .set_start(appear_time)
-            .set_duration(duration - appear_time)
-            .set_opacity(0.5)
-        )
-
-        bullet_clips.extend([shadow, bullet])
-
-
-    # -----------------------------
-    # CONTENT IMAGE (BOTTOM-RIGHT, STATIC)
-    # -----------------------------
-    image_clips = []
-    if os.path.exists(image_path):
-        img = (
-            ImageClip(image_path)
-            .resize(height=220)  # fixed, clean size
-            .set_position((
-                VIDEO_W - 260,    # right margin
-                VIDEO_H - 260     # bottom margin
-            ))
-            .set_duration(duration)
-        )
-
-        image_clips.append(img)
-
-
-    # -----------------------------
-    # FOOTER
-    # -----------------------------
-    footer = (
-        TextClip(
-            "Bangla Sahayta Kendra • Government of West Bengal",
-            fontsize=18,
-            color="lightgray",
-            font="Arial",
-            size=(VIDEO_W - 80, None),
-            method="caption"
-        )
-        .set_position(("center", VIDEO_H - 40))
-        .set_duration(duration)
-    )
-
-    slide = CompositeVideoClip(
-        [bg, overlay, title_shadow, title_clip]
-        + bullet_clips
-        + image_clips
-        + [footer],
-        size=(VIDEO_W, VIDEO_H)
-    ).set_duration(duration)
-
+    # 5. Overlay Graphics (Black gradient/shadow for readability)
+    # Note: Simplified for this version to ensure it runs on Streamlit
+    
+    # 6. Compose the Video
+    slide = CompositeVideoClip([img_clip, title_clip, content_clip], size=(1920, 1080))
     slide = slide.set_audio(audio_clip)
 
-    # -----------------------------
-    # AVATAR (kept intact)
-    # -----------------------------
-    slide = add_avatar_to_slide(slide, audio_clip.duration)
+    # Optional: Add fades for smooth transitions
+    return slide.crossfadein(0.5).crossfadeout(0.5)
 
-    return slide.crossfadein(0.4).crossfadeout(0.4)
-
-
-# -------------------------------------------------
-# COMBINE SLIDES (NO BLACK GAPS)
-# -------------------------------------------------
+# --- FINAL VIDEO COMPOSITION ---
 def combine_slides_and_audio(video_clips, audio_paths, service_name=None):
-    # Smooth overlap between slides
-    final_video = concatenate_videoclips(
-        video_clips,
-        method="compose",
-        padding=-0.4
-    )
+    """
+    Combines all individual slides into a single MP4 file.
+    """
+    # Concatenate all clips with a 'compose' method to handle different sizes
+    final_video = concatenate_videoclips(video_clips, method="compose", padding=-0.5)
 
-    audio_clips = [AudioFileClip(p) for p in audio_paths]
-    final_audio = concatenate_audioclips(audio_clips)
+    # Create output directory
+    output_dir = "output_videos"
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
 
-    final_video = final_video.set_audio(final_audio)
-
-    os.makedirs("output_videos", exist_ok=True)
-
-    filename = "bsk_training_video.mp4"
+    # Generate Filename
+    filename = "training_video.mp4"
     if service_name:
-        safe = service_name.replace(" ", "_")
-        filename = f"BSK_Training_{safe}.mp4"
+        safe_name = "".join([c for c in service_name if c.isalnum() or c in (' ', '_')]).rstrip()
+        filename = f"Training_{safe_name.replace(' ', '_')}.mp4"
+    
+    output_path = os.path.join(output_dir, filename)
 
-    output_path = os.path.join("output_videos", filename)
-
+    # Write the video file
+    # We use 'libx264' for high compatibility and 'aac' for audio
     final_video.write_videofile(
         output_path,
+        fps=24,
         codec="libx264",
         audio_codec="aac",
-        fps=30,
-        preset="medium",
-        bitrate="2000k",
-        threads=4
+        temp_audiofile="temp-audio.m4a",
+        remove_temp=True
     )
 
     return output_path
