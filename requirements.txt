@@ -1,7 +1,6 @@
 google-genai
 python-pptx
 python-dotenv
-comtypes
 streamlit
 requests
 moviepy==1.0.3
